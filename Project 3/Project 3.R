@@ -5,33 +5,32 @@ library(factoextra)
 library(caret)
 library(glmnet)
 
-
 df_lifeexp <- read_xlsx("Life Expectancy Data.xlsx", sheet = "Life Expectancy Data", 
                         col_names = T, range = "A1:V2939")
 head(df_lifeexp)
 
-## Przeniesie kolumny z wartościami wyjściowymi (długość życia) na koniec tabeli
+## Move the column with outcome values (life expectancy) to the end of the table
 Life_expectancy <- df_lifeexp$Life_expectancy
 df_lifeexp$Life_expectancy <- NULL
 df_lifeexp <- cbind(df_lifeexp, Life_expectancy)
 
-df_lifeexp = df_lifeexp[df_lifeexp$Year == 2013, ] # pobranie rekordów dla roku 2013
+df_lifeexp = df_lifeexp[df_lifeexp$Year == 2013, ] # filter records for the year 2013
 print(head(df_lifeexp))
 
-df_lifeexp$Status <- ifelse(df_lifeexp$Status == "Developed", 1, 0) # jeżeli status jest "Developed"
-# to mamy wartość 1, a w przeciwnym wypadku ("Developing") 0
-df_lifeexp = df_lifeexp[, c(-1, -2)] # pozbywamy się kolumy tekstowej Country i kolumny Year
-df_lifeexp <- na.omit(df_lifeexp) # występowały jakieś braki w danych, więc usuwamy te obserwacje
+df_lifeexp$Status <- ifelse(df_lifeexp$Status == "Developed", 1, 0) # if status is "Developed"
+# then assign value 1, otherwise ("Developing") 0
+df_lifeexp = df_lifeexp[, c(-1, -2)] # remove the text column "Country" and the "Year" column
+df_lifeexp <- na.omit(df_lifeexp) # remove rows with missing data
 
 df_lifeexp <- as.data.frame(df_lifeexp)
 
-# zaokrąglanie wartości zmiennoprzecinkowych, żeby lepiej wyglądało na rozkładzie 
-# wartości procentowe z dokładnością do 0,5 % a kolumna GDP do całości
+# rounding floating point values for better appearance in distribution plots
+# percentage values to 0.5% accuracy and the GDP column to whole numbers
 df_lifeexp$percentage_expenditure <- floor(df_lifeexp$percentage_expenditure * 2 + 0.5) / 2
 df_lifeexp$Total_expenditure <- floor(df_lifeexp$Total_expenditure * 2 + 0.5) / 2
 df_lifeexp$GDP <- round(df_lifeexp$GDP)
 
-# dane po przekształceniach
+# data after transformations
 head(df_lifeexp)
 
 cnames_XY <- c("X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11",
@@ -43,59 +42,57 @@ head(df_lifeexp_XY)
 stat = describe(df_lifeexp_XY, type = 2, quant = c(.25, .75))
 print(stat[-1, -c(1, 2, 6, 7)])
 wsp_zm <- round( (stat$sd/stat$mean)*100, 3)
-which(wsp_zm < 10) # quasi-stałe
+which(wsp_zm < 10) # quasi-constant variables
 wsp_zm <- as.data.frame( t(c(wsp_zm)) )
 colnames(wsp_zm) <- colnames(df_lifeexp_XY)
 rownames(wsp_zm) <- 'wsp_zm '
 wsp_zm
 
-
-# Liczba kolumn w df_lifeexp
+# Number of columns in df_lifeexp
 num_cols <- ncol(df_lifeexp)
 for (i in 1:num_cols) {
   title_text = paste0(colnames(df_lifeexp_XY)[i], ' - ', colnames(df_lifeexp)[i])
   if (i %in% c(1, 6, 10, 11, 12, 13)) {
-    # Rysowanie wykresu słupkowego dla zmiennych kategorycznych
+    # Draw bar chart for categorical variables
     counts <- table(df_lifeexp[, i])
     ylim_max <- max(counts, na.rm = TRUE)
-    barplot(counts, ylab = "Liczba obserwacji", ylim = c(0, 1.2 * ylim_max),
+    barplot(counts, ylab = "Number of observations", ylim = c(0, 1.2 * ylim_max),
             main = title_text)
   }
   
   else {
-    # tam gdzie jest duża zmienność lub bardzo szeroki zakres przyjmowanych wartości 
-    # są rysowane histogramy
+    # Draw histograms for variables with high variability or wide range of values
     
-    # pomocniczy dataframe do ggplot
+    # auxiliary dataframe for ggplot
     temp_df <- data.frame(x = df_lifeexp[, i])
-    # Dynamiczny binwidth
+    # Dynamic binwidth
     bw <- (max(temp_df$x, na.rm = TRUE) - min(temp_df$x, na.rm = TRUE)) / 30
     
-    # rysowanie histogramu
+    # draw histogram
     print(ggplot(temp_df, aes(x = x)) +
             geom_histogram(binwidth = bw, fill = "grey", color = "black") +
-            labs(title = title_text, x="", y = "Liczba obserwacji") +
+            labs(title = title_text, x="", y = "Number of observations") +
             theme(plot.title = element_text(hjust = 0.5))
     )
   } 
   
-  # boxploty
+  # boxplots
   boxplot(df_lifeexp[, i], 
           main = paste0(colnames(df_lifeexp_XY)[i], ' - ', colnames(df_lifeexp)[i])) 
 }
 
-# Macierz korelacji
-ggcorrplot(cor(df_lifeexp_XY), lab = T, lab_size = 2, title="Macierz korelacji")
+# Correlation matrix
+ggcorrplot(cor(df_lifeexp_XY), lab = T, lab_size = 2, title="Correlation matrix")
 
-## usunięcie obserwacji odstających
+## Remove outlier observations
 transform_outlier_data <- function(df) {
   for (i in 1:ncol(df)) {
-    whiskers = boxplot.stats(df[,i])$stats[c(1, 5)] # wartości wąsów dolnego i górnego
+    whiskers = boxplot.stats(df[,i])$stats[c(1, 5)] # lower and upper whisker values
     
-    # jeżeli wartość odstająca jest poniżej dolnego wąsa to ustawiamy jej wartość tego dolnego wąsa
+    # if an outlier is below the lower whisker, set its value to the lower whisker
     df[ df[, i] < whiskers[1], i] <- whiskers[1]
     
-    # jeżeli wartość odstająca jest powyżej górnego wąsa to ustawiamy jej wartość tego górnego wąsa
+    # if an outlier is above the upper whisker, set its value to the upper whisker
     df[ df[, i] > whiskers[2], i] <- whiskers[2]
   }
   
@@ -104,121 +101,115 @@ transform_outlier_data <- function(df) {
 
 df_lifeexp <- transform_outlier_data(df_lifeexp)
 
-## podział na zbiór treningowy i testowy w proporcji 0.8
+## Split the data into training and test sets with a 0.8 ratio
 set.seed(67854)
 trainIndex = createDataPartition(df_lifeexp$Life_expectancy, p = 0.8)$Resample1
-train = df_lifeexp[trainIndex, ] # zbiór treningowy
-test = df_lifeexp[-trainIndex, ] # zbiór testowy
+train = df_lifeexp[trainIndex, ] # training set
+test = df_lifeexp[-trainIndex, ] # test set
 
-# wychodzi 106 obserwacji dla zbioru uczącego
+# There are 106 observations in the training set
 print("N ROWS:")
 print(nrow(train))
 
-
 ###############################################################################################
-# DOBÓR ZMIENNYCH
+# VARIABLE SELECTION
 
-# Przygotowanie danych (dane treningowe) do doboru zmiennych regresją LASSO
+# Prepare the data (training data) for variable selection using LASSO regression
 x <- as.matrix(train[, -ncol(train)])  
 y <- train$Life_expectancy 
 
-# LASSO Regression (selekcja zmiennych)
-lasso_cv <- cv.glmnet(x, y, alpha = 1, standardize = TRUE, nfolds = 10)  # Walidacja krzyżowa dla modelu LASSO
+# LASSO Regression (variable selection)
+lasso_cv <- cv.glmnet(x, y, alpha = 1, standardize = TRUE, nfolds = 10)  # Cross-validation for LASSO model
 print("LAMBDA MIN: ")
 print(lasso_cv$lambda.min)
-plot(lasso_cv) # Wykres zależności błędu od wartości lambda
-lambda_lasso <- lasso_cv$lambda.min  # Wybór optymalnej wartości lambda minimalizującej błąd
+plot(lasso_cv) # Plot error as a function of lambda
+lambda_lasso <- lasso_cv$lambda.min  # Choose optimal lambda that minimizes error
 
-lasso_model <- glmnet(x, y, alpha = 1, lambda = lambda_lasso, standardize = TRUE)  # Trenowanie modelu LASSO z optymalnym lambda
-print("Współczyniki zmiennych w regresji LASSO:")
+lasso_model <- glmnet(x, y, alpha = 1, lambda = lambda_lasso, standardize = TRUE)  # Train LASSO model with optimal lambda
+print("Coefficients of variables in LASSO regression:")
 print(coef(lasso_model))
 
-# selected_features <- which(coef(lasso_model) != 0)  # Wybór zmiennych istotnych w modelu LASSO
+# selected_features <- which(coef(lasso_model) != 0)  # Choose significant variables in LASSO model
 
-# bierzemy zmienne o numerach 2, 5, 7, 11, 13, 18, 19 (na podstawie wydruku dla LASSO)
+# take variables with numbers 2, 5, 7, 11, 13, 18, 19 (based on the LASSO output)
 selected_features = c(2, 5, 7, 11, 13, 18, 19)
-print("Wybrane zmienne w LASSO:")
+print("Selected variables in LASSO:")
 print(selected_features)
 
-
 #############################################################################################################
-# Zwykła regresja liniowa na treningowym zbiorze po odrzuceniu zmiennych 
+# Ordinary linear regression on the training set after removing variables
 
-# aktualizujemy zbiór treningowy i testowy wybierając zmienne wybrane przy regresji LASSO
-train = train[, c(selected_features, 20)] # zmienna nr 20 to nasze Y
+# update the training and test sets by selecting variables chosen by LASSO regression
+train = train[, c(selected_features, 20)] # variable number 20 is our Y
 df_lifeexp_XY = df_lifeexp_XY[, c(selected_features, 20)]
 print(head(train, 2))
 
 ggcorrplot(cor(train[,-8]), lab = T, lab_size = 2,tl.cex = 9,
-           title="Macierz korelacji zm. dobranych w Lasso")
+           title="Correlation matrix of variables selected in Lasso")
 
-
-# model linowy dla dobranych zmiennych (tworzony na podstawie zbioru treningowego)
-# tworze zwykły model liniowy dla zmiennych wskazanych w regresji LASSO
-print("MODEL LINIOWY DLA DOBRANYCH ZMIENNYCH")
+# linear model for selected variables (created based on the training set)
+# create a standard linear model for variables selected by LASSO regression
+print("LINEAR MODEL FOR SELECTED VARIABLES")
 linearModel = lm(formula = Life_expectancy ~., data = train[,-7])
 summary(linearModel)
 
-# DOPASOWANIE REGRESJI Z DOBRANYMI ZMIENNYMI DO DANYCH UCZĄCYCH
-# jeszcze raz tworze x_train i y_train zeby było wiadomo
+# FITTING THE REGRESSION WITH SELECTED VARIABLES TO TRAINING DATA
+# recreate x_train and y_train so it's clear
 x_train = train[, -ncol(train)]
 y_train = train$Life_expectancy
 
-# Dopasowanie do danych uczących
+# Fit to training data
 y_hat <- predict(linearModel, x_train)  
 plot(y_hat, y_train, 
-     main = "Regresja liniowa dla dobranych zmiennych (dopasowanie do danych uczących)")  
+     main = "Linear regression for selected variables (fitting to training data)")  
 abline(lm(y_train ~ y_hat), col = "red")  
 
+### PREDICTION FOR TEST DATA
+### Prediction for test data based on the linear model built
+### for the selected variables
 
-### PREDYKCJA DLA DANYCH TESTOWYCH
-### Predykcja dla danych testowych na podstawie modelu liniowego wyznaczonego
-### dla dobranych zmiennych
+# test data (also select only variables chosen by LASSO regression)
+test = test[, c(selected_features, 20)] # variable number 20 is our Y 
 
-# dane testowe (też wybieramy tylko zmienne dobrane przy regresji LASSO)
-test = test[, c(selected_features, 20)] # zmienna nr 20 oznacza nasz Y 
+# split into test input and output data
+x_test = test[, -ncol(test)] # test input variables
+y_test = test$Life_expectancy # test output values
 
-# podział na testowe dane wejściowe i wyjściowe
-x_test = test[, -ncol(test)] # testowe zmienne wejściowe
-y_test = test$Life_expectancy # testowe wartości wyjściowe
+y_pred = predict(linearModel, x_test) # prediction for test input data
 
-y_pred = predict(linearModel, x_test) # predykcja dla wejściowych danych testowych
-
-### Obliczenie błędu średniokwadratowego i średniego błędu bezwzględnego dla predykcji dla
-### danych testowych
+### Calculate mean squared error (MSE) and mean absolute error (MAE) for predictions on
+### test data
 MSE_LASSO = mean((y_test - y_pred)^2)
 MAE_LASSO = mean(abs(y_test - y_pred))
 print(paste0("MSE LASSO: ", MSE_LASSO))
 print(paste0("MAE LASSO: ", MAE_LASSO))
 
-
-### TESTOWANIE ZAŁOŻEŃ
+### TESTING ASSUMPTIONS
 re=resid(linearModel)
 
-##### założenia
-### brak współliniowości
+##### assumptions
+### no multicollinearity
 library(car)
 vif_values <- vif(linearModel)
-vif_values # < 10, czyli brak współliniowości stale zakłócającej wyniki. 
-# Oznacza to, że występujące w modelu zm objaśniające nie są ze sobą silnie skorelowane.
+vif_values # < 10, meaning no multicollinearity that distorts results. 
+# This means the explanatory variables in the model are not strongly correlated with each other.
 
-
-### wartości oczekiwane składników losowych są równe zero
+### expected values of residuals are zero
 mean(re)
 
-### reszty modelu mają charakter losowy
+### residuals are random
 plot(re);abline(h=0,lty=2)
 library(tseries)
 test_serii <- runs.test(factor(sign(re)))
 test_serii
 
-### składnik losowy w modelu ma rozkład normalny
+### residual component follows a normal distribution
 qqnorm(re);qqline(re)
 hist(re,prob=TRUE)
 curve(dnorm(x,mean(re),sd(re)),xlim=c(-10,10),col=2,add=TRUE)
 shapiro.test(re)
 
-### wariancje skł. los. są stałe (homoskedastyczność)
+### residual variance is constant (homoscedasticity)
 library(car)
 bp_test <- ncvTest(linearModel)
 bp_test
